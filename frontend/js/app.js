@@ -3,7 +3,10 @@
  * Frontend Application
  */
 
-const API_BASE_URL = 'http://localhost:8000/api';
+// API URL 설정 (환경에 따라 자동 선택)
+const API_BASE_URL = window.location.hostname === 'localhost'
+    ? 'http://localhost:8000/api'
+    : 'https://ganpan-api.onrender.com/api';  // Render 배포 URL
 
 // State
 const state = {
