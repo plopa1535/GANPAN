@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GANPAN - AI 쇼츠 영상 제작</title>
+
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500;700&family=Noto+Sans+KR:wght@400;500;700&display=swap" rel="stylesheet">
+
+    <!-- Material Icons -->
+    <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
+
+    <!-- Custom CSS -->
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <!-- Top App Bar -->
+    <header class="app-bar">
+        <div class="app-bar-content">
+            <div class="app-bar-left">
+                <span class="material-icons">movie_creation</span>
+                <h1 class="app-title">GANPAN</h1>
+            </div>
+            <p class="app-subtitle">AI 쇼츠 영상 제작기</p>
+        </div>
+    </header>
+
+    <main class="main-content">
+        <!-- Step Indicator -->
+        <div class="step-indicator">
+            <div class="step active" data-step="1">
+                <div class="step-number">1</div>
+                <span class="step-label">사진 업로드</span>
+            </div>
+            <div class="step-line"></div>
+            <div class="step" data-step="2">
+                <div class="step-number">2</div>
+                <span class="step-label">서사 입력</span>
+            </div>
+            <div class="step-line"></div>
+            <div class="step" data-step="3">
+                <div class="step-number">3</div>
+                <span class="step-label">영상 생성</span>
+            </div>
+        </div>
+
+        <!-- Step 1: Image Upload -->
+        <section class="card step-section" id="step1">
+            <div class="card-header">
+                <span class="material-icons">add_photo_alternate</span>
+                <h2>사진 업로드</h2>
+            </div>
+            <div class="card-content">
+                <p class="helper-text">영상에 사용할 사진들을 업로드하세요 (최대 10장)</p>
+
+                <div class="upload-area" id="uploadArea">
+                    <span class="material-icons upload-icon">cloud_upload</span>
+                    <p class="upload-text">클릭하거나 파일을 드래그하세요</p>
+                    <p class="upload-hint">JPG, PNG, WEBP (최대 10MB/장)</p>
+                    <input type="file" id="fileInput" multiple accept="image/*" hidden>
+                </div>
+
+                <div class="preview-container" id="previewContainer">
+                    <!-- Image previews will be inserted here -->
+                </div>
+            </div>
+            <div class="card-actions">
+                <button class="btn btn-primary" id="nextToStep2" disabled>
+                    다음
+                    <span class="material-icons">arrow_forward</span>
+                </button>
+            </div>
+        </section>
+
+        <!-- Step 2: Story Input -->
+        <section class="card step-section hidden" id="step2">
+            <div class="card-header">
+                <span class="material-icons">edit_note</span>
+                <h2>서사 입력</h2>
+            </div>
+            <div class="card-content">
+                <p class="helper-text">영상의 분위기와 스토리를 자연어로 설명해주세요</p>
+
+                <div class="text-field">
+                    <label for="storyInput">스토리 설명</label>
+                    <textarea id="storyInput" rows="6" placeholder="예: 가족과 함께한 제주도 여행의 아름다운 순간들. 따뜻한 햇살 아래 바다를 바라보며 느꼈던 평화로운 감정을 담아주세요. 감성적이고 따뜻한 분위기로 만들어주세요."></textarea>
+                    <span class="char-count"><span id="charCount">0</span>/500</span>
+                </div>
+
+                <div class="options-grid">
+                    <div class="option-field">
+                        <label>영상 스타일</label>
+                        <div class="chip-group" id="styleChips">
+                            <button class="chip selected" data-value="cinematic">시네마틱</button>
+                            <button class="chip" data-value="emotional">감성적</button>
+                            <button class="chip" data-value="dynamic">다이나믹</button>
+                            <button class="chip" data-value="minimal">미니멀</button>
+                        </div>
+                    </div>
+                    <div class="option-field">
+                        <label>배경음악 분위기</label>
+                        <div class="chip-group" id="musicChips">
+                            <button class="chip selected" data-value="calm">잔잔한</button>
+                            <button class="chip" data-value="upbeat">신나는</button>
+                            <button class="chip" data-value="epic">웅장한</button>
+                            <button class="chip" data-value="nostalgic">향수적</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="card-actions">
+                <button class="btn btn-text" id="backToStep1">
+                    <span class="material-icons">arrow_back</span>
+                    이전
+                </button>
+                <button class="btn btn-primary" id="generateBtn">
+                    <span class="material-icons">auto_awesome</span>
+                    영상 생성하기
+                </button>
+            </div>
+        </section>
+
+        <!-- Step 3: Generation Progress & Result -->
+        <section class="card step-section hidden" id="step3">
+            <div class="card-header">
+                <span class="material-icons">videocam</span>
+                <h2>영상 생성</h2>
+            </div>
+            <div class="card-content">
+                <!-- Progress View -->
+                <div id="progressView">
+                    <div class="progress-container">
+                        <div class="progress-circle">
+                            <svg viewBox="0 0 100 100">
+                                <circle class="progress-bg" cx="50" cy="50" r="45"/>
+                                <circle class="progress-bar" cx="50" cy="50" r="45" id="progressCircle"/>
+                            </svg>
+                            <span class="progress-percent" id="progressPercent">0%</span>
+                        </div>
+                    </div>
+
+                    <div class="progress-steps">
+                        <div class="progress-step" id="stepAnalyze">
+                            <span class="material-icons">image_search</span>
+                            <div class="progress-step-info">
+                                <span class="progress-step-title">이미지 분석 중</span>
+                                <span class="progress-step-desc">Google Vision API로 이미지를 분석합니다</span>
+                            </div>
+                            <span class="material-icons status-icon">hourglass_empty</span>
+                        </div>
+                        <div class="progress-step" id="stepScript">
+                            <span class="material-icons">psychology</span>
+                            <div class="progress-step-info">
+                                <span class="progress-step-title">스크립트 생성 중</span>
+                                <span class="progress-step-desc">Qwen이 스토리를 작성합니다</span>
+                            </div>
+                            <span class="material-icons status-icon">hourglass_empty</span>
+                        </div>
+                        <div class="progress-step" id="stepVideo">
+                            <span class="material-icons">movie_creation</span>
+                            <div class="progress-step-info">
+                                <span class="progress-step-title">영상 생성 중</span>
+                                <span class="progress-step-desc">Replicate AI가 영상을 만듭니다</span>
+                            </div>
+                            <span class="material-icons status-icon">hourglass_empty</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Result View -->
+                <div id="resultView" class="hidden">
+                    <div class="video-container">
+                        <video id="resultVideo" controls>
+                            <source src="" type="video/mp4">
+                        </video>
+                    </div>
+
+                    <div class="result-info">
+                        <h3>생성된 스크립트</h3>
+                        <p id="generatedScript"></p>
+                    </div>
+                </div>
+            </div>
+            <div class="card-actions">
+                <button class="btn btn-text hidden" id="backToStep2">
+                    <span class="material-icons">arrow_back</span>
+                    다시 만들기
+                </button>
+                <button class="btn btn-primary hidden" id="downloadBtn">
+                    <span class="material-icons">download</span>
+                    다운로드
+                </button>
+            </div>
+        </section>
+    </main>
+
+    <!-- Snackbar for notifications -->
+    <div class="snackbar" id="snackbar">
+        <span class="snackbar-text"></span>
+        <button class="snackbar-action">닫기</button>
+    </div>
+
+    <script src="js/app.js"></script>
+</body>
+</html>
