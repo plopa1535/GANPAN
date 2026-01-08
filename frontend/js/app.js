@@ -3,10 +3,8 @@
  * Frontend Application
  */
 
-// API URL 설정 (환경에 따라 자동 선택)
-const API_BASE_URL = '/api';  // 같은 서버에서 서빙
-    ? 'http://localhost:8000/api'
-    : 'https://ganpan-api.onrender.com/api';  // Render 배포 URL
+// API URL 설정 (같은 서버에서 서빙)
+const API_BASE_URL = '/api';
 
 // State
 const state = {
