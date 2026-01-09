@@ -41,7 +41,7 @@ class ReplicateService:
         progress_callback: Optional[Callable[[float], None]] = None
     ) -> List[str]:
         """
-        각 이미지에서 AI 영상 클립들을 생성
+        각 이미지에서 AI 영상 클립들을 병렬로 생성
 
         Args:
             image_paths: 입력 이미지 경로 리스트
@@ -50,7 +50,7 @@ class ReplicateService:
             progress_callback: 진행률 콜백 함수 (0-100)
 
         Returns:
-            생성된 영상 클립 경로 리스트
+            생성된 영상 클립 경로 리스트 (순서 보장)
         """
         if not self.api_key:
             print("No Replicate API key - cannot generate AI clips")
@@ -58,49 +58,161 @@ class ReplicateService:
 
         import base64
 
-        clip_paths = []
         total_images = len(image_paths)
+        print(f"Starting parallel generation of {total_images} AI clips")
 
+        if progress_callback:
+            progress_callback(5)
+
+        # Step 1: 모든 이미지를 base64로 인코딩
+        encoded_images = []
         for i, path in enumerate(image_paths):
-            try:
-                if progress_callback:
-                    progress_callback((i / total_images) * 90)
+            with open(path, "rb") as f:
+                encoded = base64.b64encode(f.read()).decode("utf-8")
+                ext = path.lower().split(".")[-1]
+                mime_type = {
+                    "jpg": "image/jpeg",
+                    "jpeg": "image/jpeg",
+                    "png": "image/png",
+                    "webp": "image/webp"
+                }.get(ext, "image/jpeg")
+                encoded_images.append(f"data:{mime_type};base64,{encoded}")
 
-                print(f"Generating AI clip {i+1}/{total_images} from {path}")
+        if progress_callback:
+            progress_callback(10)
 
-                # 이미지를 base64로 인코딩
-                with open(path, "rb") as f:
-                    encoded = base64.b64encode(f.read()).decode("utf-8")
-                    ext = path.lower().split(".")[-1]
-                    mime_type = {
-                        "jpg": "image/jpeg",
-                        "jpeg": "image/jpeg",
-                        "png": "image/png",
-                        "webp": "image/webp"
-                    }.get(ext, "image/jpeg")
-                    image_data = f"data:{mime_type};base64,{encoded}"
+        # Step 2: 모든 클립 생성 요청을 병렬로 시작
+        print("Submitting all clip generation requests in parallel...")
+        prediction_ids = await self._submit_all_predictions(encoded_images, style)
 
-                # AI 클립 생성
-                clip_url = await self._generate_clip(image_data, style)
+        if progress_callback:
+            progress_callback(20)
 
-                if clip_url:
-                    # 클립 다운로드
-                    clip_path = os.path.join(output_dir, f"clip_{i:03d}.mp4")
-                    success = await self.download_video(clip_url, clip_path)
-                    if success:
-                        clip_paths.append(clip_path)
-                        print(f"Clip {i+1} saved to {clip_path}")
-                    else:
-                        print(f"Failed to download clip {i+1}")
+        if not prediction_ids:
+            print("No predictions submitted successfully")
+            return []
 
-            except Exception as e:
-                print(f"Error generating clip {i+1}: {e}")
-                continue
+        # Step 3: 모든 예측 완료를 병렬로 대기
+        print(f"Waiting for {len(prediction_ids)} predictions to complete...")
+        clip_urls = await self._wait_all_predictions(prediction_ids, progress_callback)
+
+        if progress_callback:
+            progress_callback(80)
+
+        # Step 4: 모든 클립을 병렬로 다운로드
+        print("Downloading all clips in parallel...")
+        clip_paths = await self._download_all_clips(clip_urls, output_dir)
 
         if progress_callback:
             progress_callback(100)
 
+        print(f"Successfully generated {len(clip_paths)} clips")
         return clip_paths
+
+    async def _submit_all_predictions(
+        self,
+        encoded_images: List[str],
+        style: str
+    ) -> List[Optional[str]]:
+        """모든 이미지에 대한 예측 요청을 병렬로 제출"""
+        async def submit_one(image_data: str, index: int) -> Optional[str]:
+            try:
+                async with httpx.AsyncClient() as client:
+                    print(f"Submitting prediction {index + 1}/{len(encoded_images)}")
+                    response = await client.post(
+                        self.api_url,
+                        headers={
+                            "Authorization": f"Token {self.api_key}",
+                            "Content-Type": "application/json"
+                        },
+                        json={
+                            "version": self.video_model.split(":")[-1],
+                            "input": {
+                                "input_image": image_data,
+                                "motion_bucket_id": 127,
+                                "fps": 24,
+                                "cond_aug": 0.02,
+                                "decoding_t": 7,
+                                "video_length": "25_frames_with_svd_xt"
+                            }
+                        },
+                        timeout=60.0
+                    )
+
+                    if response.status_code not in [200, 201]:
+                        print(f"Prediction {index + 1} failed: {response.status_code}")
+                        print(f"Response: {response.text}")
+                        return None
+
+                    prediction = response.json()
+                    return prediction.get("id")
+
+            except Exception as e:
+                print(f"Error submitting prediction {index + 1}: {e}")
+                return None
+
+        # 모든 요청을 병렬로 실행
+        tasks = [submit_one(img, i) for i, img in enumerate(encoded_images)]
+        results = await asyncio.gather(*tasks)
+        return results
+
+    async def _wait_all_predictions(
+        self,
+        prediction_ids: List[Optional[str]],
+        progress_callback: Optional[Callable[[float], None]] = None
+    ) -> List[Optional[str]]:
+        """모든 예측 완료를 병렬로 대기"""
+        async def wait_one(pred_id: Optional[str], index: int) -> Optional[str]:
+            if not pred_id:
+                return None
+            try:
+                return await self._wait_for_prediction(pred_id)
+            except Exception as e:
+                print(f"Error waiting for prediction {index + 1}: {e}")
+                return None
+
+        # 완료된 작업 수 추적
+        completed = [0]
+        total = len([p for p in prediction_ids if p])
+
+        async def wait_with_progress(pred_id: Optional[str], index: int) -> Optional[str]:
+            result = await wait_one(pred_id, index)
+            completed[0] += 1
+            if progress_callback and total > 0:
+                # 20% ~ 80% 구간에서 진행률 업데이트
+                progress = 20 + (completed[0] / total) * 60
+                progress_callback(progress)
+            return result
+
+        tasks = [wait_with_progress(pid, i) for i, pid in enumerate(prediction_ids)]
+        results = await asyncio.gather(*tasks)
+        return results
+
+    async def _download_all_clips(
+        self,
+        clip_urls: List[Optional[str]],
+        output_dir: str
+    ) -> List[str]:
+        """모든 클립을 병렬로 다운로드"""
+        async def download_one(url: Optional[str], index: int) -> Optional[str]:
+            if not url:
+                return None
+            try:
+                clip_path = os.path.join(output_dir, f"clip_{index:03d}.mp4")
+                success = await self.download_video(url, clip_path)
+                if success:
+                    print(f"Downloaded clip {index + 1}")
+                    return clip_path
+                return None
+            except Exception as e:
+                print(f"Error downloading clip {index + 1}: {e}")
+                return None
+
+        tasks = [download_one(url, i) for i, url in enumerate(clip_urls)]
+        results = await asyncio.gather(*tasks)
+
+        # None 제거하고 순서 유지
+        return [path for path in results if path]
 
     async def _generate_clip(self, image_data: str, style: str) -> str:
         """단일 이미지에서 영상 클립 생성"""
