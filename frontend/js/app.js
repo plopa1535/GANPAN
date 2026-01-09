@@ -277,10 +277,51 @@ async function pollProgress(taskId) {
         { element: elements.stepVideo, start: 50, end: 100 }
     ];
 
+    let retryCount = 0;
+    const maxRetries = 5;
+
     const poll = async () => {
         try {
             const response = await fetch(`${API_BASE_URL}/progress/${taskId}`);
-            const data = await response.json();
+
+            // 응답이 비정상인 경우 처리
+            if (!response.ok) {
+                // 서버 재시작 등으로 작업이 사라진 경우
+                if (response.status === 404) {
+                    throw new Error('작업이 만료되었습니다. 다시 시도해주세요.');
+                }
+                throw new Error(`서버 오류: ${response.status}`);
+            }
+
+            // 응답 텍스트 먼저 확인
+            const text = await response.text();
+            if (!text || text.trim() === '') {
+                // 빈 응답인 경우 재시도
+                retryCount++;
+                if (retryCount < maxRetries) {
+                    console.log(`Empty response, retrying... (${retryCount}/${maxRetries})`);
+                    setTimeout(poll, 2000);
+                    return;
+                }
+                throw new Error('서버 응답이 비어있습니다');
+            }
+
+            // JSON 파싱
+            let data;
+            try {
+                data = JSON.parse(text);
+            } catch (parseError) {
+                console.error('JSON parse error:', parseError, 'Response:', text);
+                retryCount++;
+                if (retryCount < maxRetries) {
+                    setTimeout(poll, 2000);
+                    return;
+                }
+                throw new Error('서버 응답을 처리할 수 없습니다');
+            }
+
+            // 성공하면 retry 카운트 리셋
+            retryCount = 0;
 
             // Update progress UI
             updateProgress(data.progress, progressSteps);
@@ -295,7 +336,7 @@ async function pollProgress(taskId) {
             }
         } catch (error) {
             console.error('Poll error:', error);
-            showSnackbar(error.message);
+            showSnackbar(error.message || '오류가 발생했습니다');
             goToStep(2);
         }
     };
