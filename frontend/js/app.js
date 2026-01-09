@@ -412,6 +412,6 @@ window.removeImage = removeImage;
 // Initialize on DOM ready
 document.addEventListener('DOMContentLoaded', () => {
     init();
-    // Enable demo mode for testing
-    enableDemoMode();
+    // 실제 API 사용 (데모 모드 비활성화)
+    // enableDemoMode();
 });
