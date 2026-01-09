@@ -19,6 +19,13 @@ class ReplicateService:
         self.api_key = os.getenv("REPLICATE_API_KEY")
         self.api_url = "https://api.replicate.com/v1/predictions"
 
+        # 디버그: API 키 상태 출력
+        if self.api_key:
+            masked_key = self.api_key[:4] + "..." + self.api_key[-4:] if len(self.api_key) > 8 else "***"
+            print(f"Replicate API key loaded: {masked_key} (length: {len(self.api_key)})")
+        else:
+            print("WARNING: REPLICATE_API_KEY not found in environment")
+
         # 사용할 모델 설정
         # 옵션: stable-video-diffusion, runway-gen3, minimax-video, luma-dream-machine 등
         self.video_model = os.getenv(
@@ -97,6 +104,7 @@ class ReplicateService:
         """단일 이미지에서 영상 클립 생성"""
         async with httpx.AsyncClient() as client:
             # 예측 생성
+            print(f"Calling Replicate API with model: {self.video_model}")
             response = await client.post(
                 self.api_url,
                 headers={
@@ -116,6 +124,12 @@ class ReplicateService:
                 },
                 timeout=30.0
             )
+
+            # 에러 상세 로깅
+            if response.status_code != 200 and response.status_code != 201:
+                print(f"Replicate API response status: {response.status_code}")
+                print(f"Replicate API response body: {response.text}")
+
             response.raise_for_status()
             prediction = response.json()
 
