@@ -18,8 +18,8 @@ class QwenService:
         self.api_key = os.getenv("GROQ_API_KEY")
         # Groq API (OpenAI 호환)
         self.api_url = "https://api.groq.com/openai/v1/chat/completions"
-        # Groq에서 사용 가능한 Qwen 모델
-        self.model = os.getenv("GROQ_MODEL", "qwen-2.5-72b-instruct")
+        # Groq에서 사용 가능한 Qwen 모델 (2025년 기준)
+        self.model = os.getenv("GROQ_MODEL", "qwen/qwen3-32b")
 
     async def generate_script(
         self,
