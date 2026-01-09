@@ -168,13 +168,24 @@ async def process_video_generation(
 
         task_manager.update_progress(task_id, 100, "완료")
 
+        # 영상 파일 존재 확인
+        if output_path.exists():
+            print(f"Video file created successfully: {output_path} ({output_path.stat().st_size} bytes)")
+        else:
+            print(f"WARNING: Video file not found: {output_path}")
+
         # Mark as completed
+        print(f"Marking task {task_id} as completed")
         task_manager.complete_task(task_id, {
             "video_url": f"/outputs/{task_id}.mp4",
             "script": script
         })
+        print(f"Task {task_id} completed successfully")
 
     except Exception as e:
+        print(f"Task {task_id} failed with error: {e}")
+        import traceback
+        traceback.print_exc()
         task_manager.fail_task(task_id, str(e))
         raise
 
