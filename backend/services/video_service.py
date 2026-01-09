@@ -16,8 +16,9 @@ class VideoService:
     """이미지 슬라이드쇼 영상 생성 서비스"""
 
     def __init__(self):
-        self.target_size = (1080, 1920)  # 9:16 세로 영상 (쇼츠용)
-        self.fps = 30
+        # 메모리 절약을 위해 해상도와 FPS 낮춤
+        self.target_size = (720, 1280)  # 720p 세로 영상 (메모리 효율)
+        self.fps = 24  # 24fps로 낮춤 (메모리 절약)
 
     async def create_slideshow(
         self,
@@ -28,7 +29,7 @@ class VideoService:
         progress_callback: Optional[Callable[[float], None]] = None
     ) -> str:
         """
-        이미지들로 슬라이드쇼 영상 생성
+        이미지들로 슬라이드쇼 영상 생성 (스트리밍 방식)
 
         Args:
             image_paths: 이미지 파일 경로 리스트
@@ -53,31 +54,16 @@ class VideoService:
         transition_duration = min(transition_duration, duration_per_image / 3)
 
         try:
-            # 이미지 로드 및 처리
-            processed_images = []
-            for i, path in enumerate(image_paths):
-                if progress_callback:
-                    progress_callback((i / len(image_paths)) * 30)
-
-                img = await self._load_and_process_image(path)
-                processed_images.append(img)
-
-            if progress_callback:
-                progress_callback(30)
-
-            # 프레임 생성
-            frames = await self._generate_frames(
-                processed_images,
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(
+                None,
+                self._create_slideshow_streaming,
+                image_paths,
+                output_path,
                 duration_per_image,
                 transition_duration,
                 progress_callback
             )
-
-            if progress_callback:
-                progress_callback(80)
-
-            # 영상 저장
-            await self._save_video(frames, output_path)
 
             if progress_callback:
                 progress_callback(100)
@@ -88,10 +74,59 @@ class VideoService:
             print(f"Video creation error: {e}")
             raise
 
-    async def _load_and_process_image(self, path: str) -> Image.Image:
-        """이미지 로드 및 9:16 비율로 처리"""
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, self._process_image_sync, path)
+    def _create_slideshow_streaming(
+        self,
+        image_paths: List[str],
+        output_path: str,
+        duration_per_image: float,
+        transition_duration: float,
+        progress_callback: Optional[Callable[[float], None]] = None
+    ):
+        """스트리밍 방식으로 슬라이드쇼 생성 - 메모리 효율적"""
+        frames_per_image = int(duration_per_image * self.fps)
+        transition_frames = int(transition_duration * self.fps)
+        total_images = len(image_paths)
+
+        # 바로 파일에 쓰기 시작
+        writer = imageio.get_writer(
+            output_path,
+            fps=self.fps,
+            codec='libx264',
+            quality=7,
+            pixelformat='yuv420p',
+            macro_block_size=8
+        )
+
+        prev_img_array = None
+
+        for img_idx, path in enumerate(image_paths):
+            # 이미지 로드 및 처리
+            img = self._process_image_sync(path)
+            img_array = np.array(img)
+
+            for frame_idx in range(frames_per_image):
+                # Ken Burns 효과 (줌 인/아웃)
+                progress = frame_idx / frames_per_image
+                zoom = 1.0 + 0.1 * progress
+
+                frame = self._apply_ken_burns(img_array, zoom, progress)
+
+                # 페이드 인 (전환 구간)
+                if frame_idx < transition_frames and prev_img_array is not None:
+                    alpha = frame_idx / transition_frames
+                    prev_frame = self._apply_ken_burns(prev_img_array, 1.1, 1.0)
+                    frame = self._blend_frames(prev_frame, frame, alpha)
+
+                writer.append_data(frame)
+
+            prev_img_array = img_array
+
+            # 진행률 업데이트
+            if progress_callback:
+                progress_callback((img_idx + 1) / total_images * 90)
+
+        writer.close()
+        print(f"Slideshow saved to {output_path}")
 
     def _process_image_sync(self, path: str) -> Image.Image:
         """동기 이미지 처리"""
@@ -117,67 +152,6 @@ class VideoService:
 
         return img
 
-    async def _generate_frames(
-        self,
-        images: List[Image.Image],
-        duration_per_image: float,
-        transition_duration: float,
-        progress_callback: Optional[Callable[[float], None]] = None
-    ) -> List:
-        """프레임 생성 (Ken Burns 효과 + 페이드 전환)"""
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(
-            None,
-            self._generate_frames_sync,
-            images,
-            duration_per_image,
-            transition_duration,
-            progress_callback
-        )
-
-    def _generate_frames_sync(
-        self,
-        images: List[Image.Image],
-        duration_per_image: float,
-        transition_duration: float,
-        progress_callback: Optional[Callable[[float], None]] = None
-    ) -> List:
-        """동기 프레임 생성"""
-        import numpy as np
-
-        frames = []
-        frames_per_image = int(duration_per_image * self.fps)
-        transition_frames = int(transition_duration * self.fps)
-
-        total_images = len(images)
-
-        for img_idx, img in enumerate(images):
-            img_array = np.array(img)
-
-            for frame_idx in range(frames_per_image):
-                # Ken Burns 효과 (줌 인/아웃)
-                progress = frame_idx / frames_per_image
-                zoom = 1.0 + 0.1 * progress  # 1.0 -> 1.1 줌
-
-                frame = self._apply_ken_burns(img_array, zoom, progress)
-
-                # 페이드 인 (첫 이미지 시작 또는 전환 구간)
-                if frame_idx < transition_frames:
-                    alpha = frame_idx / transition_frames
-                    if img_idx > 0:
-                        # 이전 이미지와 블렌딩
-                        prev_img = np.array(images[img_idx - 1])
-                        prev_frame = self._apply_ken_burns(prev_img, 1.1, 1.0)
-                        frame = self._blend_frames(prev_frame, frame, alpha)
-
-                frames.append(frame)
-
-            # 진행률 업데이트
-            if progress_callback:
-                progress_callback(30 + (img_idx / total_images) * 50)
-
-        return frames
-
     def _apply_ken_burns(self, img_array, zoom: float, progress: float):
         """Ken Burns 효과 적용"""
         import numpy as np
@@ -200,29 +174,7 @@ class VideoService:
 
     def _blend_frames(self, frame1, frame2, alpha: float):
         """두 프레임 블렌딩"""
-        import numpy as np
         return (frame1 * (1 - alpha) + frame2 * alpha).astype(np.uint8)
-
-    async def _save_video(self, frames: List, output_path: str):
-        """영상 파일 저장"""
-        loop = asyncio.get_event_loop()
-        await loop.run_in_executor(None, self._save_video_sync, frames, output_path)
-
-    def _save_video_sync(self, frames: List, output_path: str):
-        """동기 영상 저장"""
-        writer = imageio.get_writer(
-            output_path,
-            fps=self.fps,
-            codec='libx264',
-            quality=8,
-            pixelformat='yuv420p',
-            macro_block_size=16
-        )
-
-        for frame in frames:
-            writer.append_data(frame)
-
-        writer.close()
 
     async def merge_video_clips(
         self,
@@ -267,76 +219,72 @@ class VideoService:
         target_duration: float,
         progress_callback: Optional[Callable[[float], None]] = None
     ) -> str:
-        """동기 클립 병합"""
-        all_frames = []
+        """동기 클립 병합 - 스트리밍 방식으로 메모리 효율화"""
         clip_fps = self.fps
         transition_frames = int(transition_duration * clip_fps)
-
+        target_frames = int(target_duration * clip_fps)
         total_clips = len(clip_paths)
+
+        # 스트리밍 방식: 바로 파일에 쓰기
+        writer = imageio.get_writer(
+            output_path,
+            fps=self.fps,
+            codec='libx264',
+            quality=7,
+            pixelformat='yuv420p',
+            macro_block_size=8  # 720p에 맞게 조정
+        )
+
+        frames_written = 0
+        last_frame = None
 
         for clip_idx, clip_path in enumerate(clip_paths):
             try:
-                print(f"Reading clip {clip_idx + 1}/{total_clips}: {clip_path}")
+                print(f"Processing clip {clip_idx + 1}/{total_clips}: {clip_path}")
 
-                # 클립 읽기
                 reader = imageio.get_reader(clip_path)
-                clip_frames = []
+                clip_frame_count = 0
 
                 for frame in reader:
-                    # 9:16 비율로 리사이즈
+                    if frames_written >= target_frames:
+                        break
+
                     frame_resized = self._resize_frame_to_target(frame)
-                    clip_frames.append(frame_resized)
+
+                    # 첫 클립이 아니고 전환 구간이면 블렌딩
+                    if clip_idx > 0 and clip_frame_count < transition_frames and last_frame is not None:
+                        alpha = clip_frame_count / transition_frames
+                        frame_resized = self._blend_frames(last_frame, frame_resized, alpha)
+
+                    writer.append_data(frame_resized)
+                    last_frame = frame_resized
+                    frames_written += 1
+                    clip_frame_count += 1
 
                 reader.close()
-
-                if not clip_frames:
-                    continue
-
-                # 첫 클립이 아니면 전환 효과 적용
-                if clip_idx > 0 and all_frames and transition_frames > 0:
-                    # 이전 클립 끝 프레임들과 현재 클립 시작 프레임들 블렌딩
-                    for t in range(min(transition_frames, len(clip_frames))):
-                        alpha = t / transition_frames
-                        if len(all_frames) > 0:
-                            prev_frame = all_frames[-1]
-                            curr_frame = clip_frames[t]
-                            blended = self._blend_frames(prev_frame, curr_frame, alpha)
-                            all_frames.append(blended)
-                    # 나머지 프레임 추가
-                    all_frames.extend(clip_frames[transition_frames:])
-                else:
-                    all_frames.extend(clip_frames)
 
                 if progress_callback:
                     progress_callback((clip_idx + 1) / total_clips * 80)
 
+                if frames_written >= target_frames:
+                    break
+
             except Exception as e:
-                print(f"Error reading clip {clip_path}: {e}")
+                print(f"Error processing clip {clip_path}: {e}")
                 continue
 
-        if not all_frames:
-            raise ValueError("병합할 프레임이 없습니다")
+        # 프레임이 부족하면 마지막 프레임 반복
+        if last_frame is not None:
+            while frames_written < target_frames:
+                writer.append_data(last_frame)
+                frames_written += 1
 
-        # 목표 길이에 맞게 조정 (필요시 반복 또는 자르기)
-        target_frames = int(target_duration * clip_fps)
-        if len(all_frames) < target_frames:
-            # 프레임 부족 - 마지막 클립 반복
-            while len(all_frames) < target_frames:
-                all_frames.append(all_frames[-1])
-        elif len(all_frames) > target_frames:
-            # 프레임 초과 - 자르기
-            all_frames = all_frames[:target_frames]
-
-        if progress_callback:
-            progress_callback(90)
-
-        # 영상 저장
-        print(f"Saving merged video with {len(all_frames)} frames to {output_path}")
-        self._save_video_sync(all_frames, output_path)
+        writer.close()
 
         if progress_callback:
             progress_callback(100)
 
+        print(f"Saved video with {frames_written} frames to {output_path}")
         return output_path
 
     def _resize_frame_to_target(self, frame: np.ndarray) -> np.ndarray:
