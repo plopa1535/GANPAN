@@ -126,6 +126,7 @@ async def process_video_generation(
         task_manager.update_progress(task_id, 50, "스크립트 생성 완료")
 
         # Step 3: Generate video (50-100%)
+        print(f"[{task_id}] Step 3: Starting video generation")
         task_manager.update_progress(task_id, 55, "AI 영상 클립 생성 시작")
 
         output_path = OUTPUT_DIR / f"{task_id}.mp4"
@@ -133,6 +134,7 @@ async def process_video_generation(
         clips_dir.mkdir(parents=True, exist_ok=True)
 
         # Replicate API로 각 이미지에서 AI 영상 클립 생성
+        print(f"[{task_id}] Calling Replicate API for clip generation...")
         clip_paths = await replicate_service.generate_video_clips(
             image_paths=image_paths,
             output_dir=str(clips_dir),
@@ -141,11 +143,13 @@ async def process_video_generation(
                 task_id, 55 + (p * 0.30), "AI 영상 클립 생성 중"
             )
         )
+        print(f"[{task_id}] Replicate returned {len(clip_paths)} clips")
 
         task_manager.update_progress(task_id, 85, "영상 클립 병합 중")
 
         if clip_paths:
             # AI 클립들을 병합하여 60초 영상 생성
+            print(f"[{task_id}] Merging {len(clip_paths)} AI clips...")
             await video_service.merge_video_clips(
                 clip_paths=clip_paths,
                 output_path=str(output_path),
@@ -155,8 +159,10 @@ async def process_video_generation(
                     task_id, 85 + (p * 0.15), "영상 클립 병합 중"
                 )
             )
+            print(f"[{task_id}] AI clip merge completed")
         else:
             # AI 클립 생성 실패 시 슬라이드쇼로 폴백
+            print(f"[{task_id}] No AI clips, falling back to slideshow...")
             task_manager.update_progress(task_id, 85, "슬라이드쇼 영상 생성 중")
             await video_service.create_slideshow(
                 image_paths=image_paths,
@@ -165,6 +171,7 @@ async def process_video_generation(
                     task_id, 85 + (p * 0.15), "슬라이드쇼 생성 중"
                 )
             )
+            print(f"[{task_id}] Slideshow generation completed")
 
         task_manager.update_progress(task_id, 100, "완료")
 
