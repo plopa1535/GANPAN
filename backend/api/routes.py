@@ -12,6 +12,7 @@ from pathlib import Path
 from services.vision_service import VisionService
 from services.qwen_service import QwenService
 from services.replicate_service import ReplicateService
+from services.video_service import VideoService
 from services.task_manager import TaskManager
 
 router = APIRouter()
@@ -20,6 +21,7 @@ router = APIRouter()
 vision_service = VisionService()
 qwen_service = QwenService()
 replicate_service = ReplicateService()
+video_service = VideoService()
 task_manager = TaskManager()
 
 # Directories
@@ -123,22 +125,19 @@ async def process_video_generation(
 
         task_manager.update_progress(task_id, 50, "스크립트 생성 완료")
 
-        # Step 3: Generate video with Replicate (50-100%)
+        # Step 3: Generate video (50-100%)
         task_manager.update_progress(task_id, 55, "영상 생성 시작")
 
         output_path = OUTPUT_DIR / f"{task_id}.mp4"
 
-        video_url = await replicate_service.generate_video(
+        # 슬라이드쇼 영상 생성 (60초)
+        await video_service.create_slideshow(
             image_paths=image_paths,
-            script=script,
-            style=style,
+            output_path=str(output_path),
             progress_callback=lambda p: task_manager.update_progress(
                 task_id, 55 + (p * 0.45), "영상 생성 중"
             )
         )
-
-        # Download or save video
-        await replicate_service.download_video(video_url, str(output_path))
 
         task_manager.update_progress(task_id, 100, "완료")
 

@@ -19,5 +19,9 @@ aiofiles>=23.2.1
 # Image Processing
 Pillow>=10.0.0
 
+# Video Processing
+imageio>=2.34.0
+imageio-ffmpeg>=0.5.1
+
 # Utilities
 pydantic>=2.5.0
