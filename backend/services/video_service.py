@@ -1,6 +1,6 @@
 """
 Video Generation Service
-이미지들을 슬라이드쇼 영상으로 변환
+이미지들을 슬라이드쇼 영상으로 변환 + AI 클립 병합
 """
 
 import os
@@ -9,6 +9,7 @@ from typing import List, Optional, Callable
 from pathlib import Path
 from PIL import Image
 import imageio
+import numpy as np
 
 
 class VideoService:
@@ -222,3 +223,139 @@ class VideoService:
             writer.append_data(frame)
 
         writer.close()
+
+    async def merge_video_clips(
+        self,
+        clip_paths: List[str],
+        output_path: str,
+        transition_duration: float = 0.5,
+        target_duration: float = 60.0,
+        progress_callback: Optional[Callable[[float], None]] = None
+    ) -> str:
+        """
+        여러 AI 영상 클립을 하나로 병합
+
+        Args:
+            clip_paths: 클립 파일 경로 리스트
+            output_path: 출력 영상 경로
+            transition_duration: 전환 효과 시간 (초)
+            target_duration: 목표 영상 길이 (초)
+            progress_callback: 진행률 콜백
+
+        Returns:
+            병합된 영상 경로
+        """
+        if not clip_paths:
+            raise ValueError("클립이 없습니다")
+
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(
+            None,
+            self._merge_clips_sync,
+            clip_paths,
+            output_path,
+            transition_duration,
+            target_duration,
+            progress_callback
+        )
+
+    def _merge_clips_sync(
+        self,
+        clip_paths: List[str],
+        output_path: str,
+        transition_duration: float,
+        target_duration: float,
+        progress_callback: Optional[Callable[[float], None]] = None
+    ) -> str:
+        """동기 클립 병합"""
+        all_frames = []
+        clip_fps = self.fps
+        transition_frames = int(transition_duration * clip_fps)
+
+        total_clips = len(clip_paths)
+
+        for clip_idx, clip_path in enumerate(clip_paths):
+            try:
+                print(f"Reading clip {clip_idx + 1}/{total_clips}: {clip_path}")
+
+                # 클립 읽기
+                reader = imageio.get_reader(clip_path)
+                clip_frames = []
+
+                for frame in reader:
+                    # 9:16 비율로 리사이즈
+                    frame_resized = self._resize_frame_to_target(frame)
+                    clip_frames.append(frame_resized)
+
+                reader.close()
+
+                if not clip_frames:
+                    continue
+
+                # 첫 클립이 아니면 전환 효과 적용
+                if clip_idx > 0 and all_frames and transition_frames > 0:
+                    # 이전 클립 끝 프레임들과 현재 클립 시작 프레임들 블렌딩
+                    for t in range(min(transition_frames, len(clip_frames))):
+                        alpha = t / transition_frames
+                        if len(all_frames) > 0:
+                            prev_frame = all_frames[-1]
+                            curr_frame = clip_frames[t]
+                            blended = self._blend_frames(prev_frame, curr_frame, alpha)
+                            all_frames.append(blended)
+                    # 나머지 프레임 추가
+                    all_frames.extend(clip_frames[transition_frames:])
+                else:
+                    all_frames.extend(clip_frames)
+
+                if progress_callback:
+                    progress_callback((clip_idx + 1) / total_clips * 80)
+
+            except Exception as e:
+                print(f"Error reading clip {clip_path}: {e}")
+                continue
+
+        if not all_frames:
+            raise ValueError("병합할 프레임이 없습니다")
+
+        # 목표 길이에 맞게 조정 (필요시 반복 또는 자르기)
+        target_frames = int(target_duration * clip_fps)
+        if len(all_frames) < target_frames:
+            # 프레임 부족 - 마지막 클립 반복
+            while len(all_frames) < target_frames:
+                all_frames.append(all_frames[-1])
+        elif len(all_frames) > target_frames:
+            # 프레임 초과 - 자르기
+            all_frames = all_frames[:target_frames]
+
+        if progress_callback:
+            progress_callback(90)
+
+        # 영상 저장
+        print(f"Saving merged video with {len(all_frames)} frames to {output_path}")
+        self._save_video_sync(all_frames, output_path)
+
+        if progress_callback:
+            progress_callback(100)
+
+        return output_path
+
+    def _resize_frame_to_target(self, frame: np.ndarray) -> np.ndarray:
+        """프레임을 타겟 사이즈로 리사이즈"""
+        img = Image.fromarray(frame)
+
+        # 9:16 비율로 크롭/리사이즈
+        target_ratio = self.target_size[0] / self.target_size[1]
+        img_ratio = img.width / img.height
+
+        if img_ratio > target_ratio:
+            new_width = int(img.height * target_ratio)
+            left = (img.width - new_width) // 2
+            img = img.crop((left, 0, left + new_width, img.height))
+        else:
+            new_height = int(img.width / target_ratio)
+            top = (img.height - new_height) // 2
+            img = img.crop((0, top, img.width, top + new_height))
+
+        img = img.resize(self.target_size, Image.Resampling.LANCZOS)
+
+        return np.array(img)

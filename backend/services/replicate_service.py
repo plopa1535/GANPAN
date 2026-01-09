@@ -6,6 +6,7 @@ AI 영상 생성을 위한 서비스
 import os
 import asyncio
 from typing import List, Callable, Optional
+from pathlib import Path
 import httpx
 from dotenv import load_dotenv
 
@@ -27,43 +28,49 @@ class ReplicateService:
             print("WARNING: REPLICATE_API_KEY not found in environment")
 
         # 사용할 모델 설정
-        # 옵션: stable-video-diffusion, runway-gen3, minimax-video, luma-dream-machine 등
         self.video_model = os.getenv(
             "REPLICATE_VIDEO_MODEL",
             "stability-ai/stable-video-diffusion:3f0457e4619daac51203dedb472816fd4af51f3149fa7a9e0b5ffcf1b8172438"
         )
 
-    async def generate_video(
+    async def generate_video_clips(
         self,
         image_paths: List[str],
-        script: str,
+        output_dir: str,
         style: str = "cinematic",
         progress_callback: Optional[Callable[[float], None]] = None
-    ) -> str:
+    ) -> List[str]:
         """
-        이미지와 스크립트를 바탕으로 AI 영상 생성
+        각 이미지에서 AI 영상 클립들을 생성
 
         Args:
             image_paths: 입력 이미지 경로 리스트
-            script: 생성된 스크립트
+            output_dir: 클립 저장 디렉토리
             style: 영상 스타일
             progress_callback: 진행률 콜백 함수 (0-100)
 
         Returns:
-            생성된 영상 URL
+            생성된 영상 클립 경로 리스트
         """
         if not self.api_key:
-            # API 키가 없으면 더미 URL 반환 (개발용)
-            return await self._simulate_generation(progress_callback)
+            print("No Replicate API key - cannot generate AI clips")
+            return []
 
-        try:
-            # 이미지들을 base64로 인코딩
-            import base64
-            encoded_images = []
-            for path in image_paths:
+        import base64
+
+        clip_paths = []
+        total_images = len(image_paths)
+
+        for i, path in enumerate(image_paths):
+            try:
+                if progress_callback:
+                    progress_callback((i / total_images) * 90)
+
+                print(f"Generating AI clip {i+1}/{total_images} from {path}")
+
+                # 이미지를 base64로 인코딩
                 with open(path, "rb") as f:
                     encoded = base64.b64encode(f.read()).decode("utf-8")
-                    # 파일 확장자에 따른 MIME 타입 결정
                     ext = path.lower().split(".")[-1]
                     mime_type = {
                         "jpg": "image/jpeg",
@@ -71,34 +78,29 @@ class ReplicateService:
                         "png": "image/png",
                         "webp": "image/webp"
                     }.get(ext, "image/jpeg")
-                    encoded_images.append(f"data:{mime_type};base64,{encoded}")
+                    image_data = f"data:{mime_type};base64,{encoded}"
 
-            # 첫 번째 이미지를 기반으로 영상 생성 (SVD 모델 사용)
-            # 여러 이미지 → 영상은 각 이미지별로 클립 생성 후 합성 필요
-            video_clips = []
-
-            for i, image_data in enumerate(encoded_images):
-                if progress_callback:
-                    progress_callback((i / len(encoded_images)) * 80)
-
+                # AI 클립 생성
                 clip_url = await self._generate_clip(image_data, style)
-                video_clips.append(clip_url)
 
-            # 클립들을 합성 (별도 처리 필요, 여기서는 첫 번째 클립 반환)
-            if progress_callback:
-                progress_callback(90)
+                if clip_url:
+                    # 클립 다운로드
+                    clip_path = os.path.join(output_dir, f"clip_{i:03d}.mp4")
+                    success = await self.download_video(clip_url, clip_path)
+                    if success:
+                        clip_paths.append(clip_path)
+                        print(f"Clip {i+1} saved to {clip_path}")
+                    else:
+                        print(f"Failed to download clip {i+1}")
 
-            # TODO: FFmpeg 등을 사용해 클립 합성
-            final_video_url = video_clips[0] if video_clips else ""
+            except Exception as e:
+                print(f"Error generating clip {i+1}: {e}")
+                continue
 
-            if progress_callback:
-                progress_callback(100)
+        if progress_callback:
+            progress_callback(100)
 
-            return final_video_url
-
-        except Exception as e:
-            print(f"Replicate API error: {e}")
-            return await self._simulate_generation(progress_callback)
+        return clip_paths
 
     async def _generate_clip(self, image_data: str, style: str) -> str:
         """단일 이미지에서 영상 클립 생성"""

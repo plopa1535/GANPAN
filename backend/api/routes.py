@@ -126,18 +126,45 @@ async def process_video_generation(
         task_manager.update_progress(task_id, 50, "스크립트 생성 완료")
 
         # Step 3: Generate video (50-100%)
-        task_manager.update_progress(task_id, 55, "영상 생성 시작")
+        task_manager.update_progress(task_id, 55, "AI 영상 클립 생성 시작")
 
         output_path = OUTPUT_DIR / f"{task_id}.mp4"
+        clips_dir = UPLOAD_DIR / task_id / "clips"
+        clips_dir.mkdir(parents=True, exist_ok=True)
 
-        # 슬라이드쇼 영상 생성 (60초)
-        await video_service.create_slideshow(
+        # Replicate API로 각 이미지에서 AI 영상 클립 생성
+        clip_paths = await replicate_service.generate_video_clips(
             image_paths=image_paths,
-            output_path=str(output_path),
+            output_dir=str(clips_dir),
+            style=style,
             progress_callback=lambda p: task_manager.update_progress(
-                task_id, 55 + (p * 0.45), "영상 생성 중"
+                task_id, 55 + (p * 0.30), "AI 영상 클립 생성 중"
             )
         )
+
+        task_manager.update_progress(task_id, 85, "영상 클립 병합 중")
+
+        if clip_paths:
+            # AI 클립들을 병합하여 60초 영상 생성
+            await video_service.merge_video_clips(
+                clip_paths=clip_paths,
+                output_path=str(output_path),
+                transition_duration=0.5,
+                target_duration=60.0,
+                progress_callback=lambda p: task_manager.update_progress(
+                    task_id, 85 + (p * 0.15), "영상 클립 병합 중"
+                )
+            )
+        else:
+            # AI 클립 생성 실패 시 슬라이드쇼로 폴백
+            task_manager.update_progress(task_id, 85, "슬라이드쇼 영상 생성 중")
+            await video_service.create_slideshow(
+                image_paths=image_paths,
+                output_path=str(output_path),
+                progress_callback=lambda p: task_manager.update_progress(
+                    task_id, 85 + (p * 0.15), "슬라이드쇼 생성 중"
+                )
+            )
 
         task_manager.update_progress(task_id, 100, "완료")
 
